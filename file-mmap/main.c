@@ -26,7 +26,16 @@
 #include <error.h>
  #include <sys/ioctl.h>
 
+#include <sys/inotify.h>
+#include <sys/epoll.h>
+ #include <stdio.h>
 
+  #include <sys/types.h>
+       #include <sys/stat.h>
+       #include <fcntl.h>
+
+
+#include <pthread.h>
 
  #include "common.h"
 
@@ -173,6 +182,20 @@ int test_dev_mmap(int fd)
     printf("%s :%d  \n",__FILE__,__LINE__);
     return 0;
 }
+int test_dev_mmap_for_poll(int fd)
+{
+
+    char *addr = NULL;
+    char *paddr = NULL;
+
+
+    printf("%s :%d modify memap content <%s> \n",__FILE__,__LINE__,paddr);
+
+
+
+
+    return 0;
+}
 
 void test_dev()
 {
@@ -180,15 +203,16 @@ void test_dev()
     if(fd <0)
     {
         perror("/dev/my_cdev\n");
-        exit(1);
-    }
+         exit(1);
+     }
+
     dev_ioctl_set_func_mem(fd,"wlist",9);
 
-    printf("%s :%d  \n",__FILE__,__LINE__);
+    printf("%s :%d  \n",__func__,__LINE__);
 
     dev_ioctl_alloc_mem(fd,BUF_SIZE);
 
-    printf("%s :%d  \n",__FILE__,__LINE__);
+    printf("%s :%d  \n",__func__,__LINE__);
 
 
     test_dev_mmap(fd);
@@ -198,12 +222,143 @@ void test_dev()
 
 
 }
+#define EPOLL_MAX_FD 255
+int poll_loop(int fd)
+{
+	int iFdNum                                     = 0;
+	int i                                         = 0;
+	struct epoll_event astEvents[EPOLL_MAX_FD]     = {0};
+    int iEpollFd;
 
+    int j = 0;
+    char* addr;
+
+
+	iEpollFd = epoll_create(EPOLL_MAX_FD);
+	if(iEpollFd < 0)
+	{
+	    int ret = 4;
+		perror("main::epoll_create Fail!");
+		pthread_exit(&ret);
+	}
+//
+{
+	struct epoll_event FdEvent              = {0};
+
+    FdEvent.data.fd = fd;
+
+	FdEvent.events = (EPOLLIN|EPOLLERR);
+
+    epoll_ctl(iEpollFd, EPOLL_CTL_ADD, fd,&FdEvent);
+}
+{
+
+addr = mmap(NULL, BUF_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED , fd, 0);
+if( addr == NULL )
+{
+
+		perror("main::addr Fail!");
+    return -1;
+}
+
+}
+
+printf("%s :%d  \n",__func__,__LINE__);
+
+//
+	for(;;)
+	{
+	    iFdNum = epoll_wait (iEpollFd,astEvents,EPOLL_MAX_FD,-1);
+        for(i = 0;i < iFdNum;i++)
+		{
+			if(astEvents[i].events & EPOLLIN)
+			{
+                if(astEvents[i].data.fd == fd)
+                {
+                    printf("%s: %d [%d] addr <%s>  \n",__func__,__LINE__,j,addr);
+                    j++;
+                    ioctl(fd,IOCTL_CODE_TEST_POLL_WAITER_WAKE_UP,0);
+                }
+#if 0
+{
+struct epoll_event FdEvent              = {0};
+
+FdEvent.data.fd = fd;
+
+FdEvent.events = (EPOLLIN|EPOLLERR);
+epoll_ctl(iEpollFd, EPOLL_CTL_ADD, fd,&FdEvent);
+}
+#endif
+			}
+	    }
+	}
+
+}
+static void* poll_pthread(void* arg)
+{
+    int fd = (int)(arg);
+    printf("%s :%d  \n",__func__,__LINE__);
+    poll_loop(fd);
+    printf("%s :%d  \n",__func__,__LINE__);
+}
+static void* wakeup_pthread(void* arg)
+{
+    int fd = (int)(arg);
+    int i = 0;
+    int up;
+    while(i<10)
+    {
+        int ret;
+        if(i%2 == 0)
+        {
+            up =1;
+        }
+        else
+            up = 0;
+        ret = ioctl(fd,IOCTL_CODE_TEST_POLL_WAITER_WAKE_UP,1);
+        printf("%s :%d ret %d \n",__func__,__LINE__,ret);
+        sleep(1);
+        i++;
+
+    }
+    return;
+
+}
 
 int main(int argc, char* argv[] )
 {
+	pthread_t tid;
+    pthread_t tid2;
+    int fd = open("/dev/my_cdev",O_RDWR);
+    if(fd <0)
+    {
+        perror("/dev/my_cdev\n");
+        exit(1);
+    }
 
-    test_dev();
+    dev_ioctl_set_func_mem(fd,"wlist",9);
+    dev_ioctl_alloc_mem(fd,BUF_SIZE);
+
+	if(pthread_create(&tid,NULL,poll_pthread,(void*)(unsigned long)fd))
+	{
+        printf("pthread creat poll_pthread Failed  \n");
+		return 0;
+	}
+
+	if(pthread_create(&tid2,NULL,wakeup_pthread,(void*)(unsigned long)fd))
+	{
+        printf("pthread creat wakeup_pthread Failed  \n");
+		return 0;
+	}
+
+
+
+
+	pthread_join(tid,NULL);
+
+	pthread_join(tid2,NULL);
+
+//    test_dev();
 
 
 		return 0;

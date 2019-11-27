@@ -43,6 +43,10 @@
 
 #include <linux/slab.h>
 
+#include <linux/mutex.h>
+#include <linux/uaccess.h>
+#include <linux/bitops.h>
+#include <linux/poll.h>
 
 #define VMD_VMALLOCED 0x1	/* vmalloc'd rather than kmalloc'd */
 
@@ -61,8 +65,25 @@ struct my_misc_dev_extern{
     struct my_mem_ctx mem_ctx;
 
 
+	wait_queue_head_t	wait;
+	int wait_flag;
 	//msg list
 	int max_type;
 };
+static __inline__ int  __release_mem_ctx( struct my_misc_dev_extern* t)
+{
+    if(t->mem_ctx.ptr)
+    {
+        if(t->mem_ctx.flag == VMD_VMALLOCED)
+            vfree(t->mem_ctx.ptr);
+        else
+            kfree(t->mem_ctx.ptr);
+
+    }
+    t->mem_ctx.ptr = NULL;
+    t->mem_ctx.flag  = 0;
+    t->mem_ctx.size = 0;
+	return 0;
+}
 
 #endif // MISC_DEV_H

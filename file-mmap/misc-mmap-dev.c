@@ -10,6 +10,10 @@ open 一个 dev.然后可以mmap,可以发ioctl.
 
 
 
+#include <linux/timer.h>
+#include <linux/timex.h>
+#include <linux/rtc.h>
+
 
 #include "common.h"
 
@@ -65,120 +69,9 @@ static ssize_t write_nvram(struct file *file, const char __user *buf,
 }
 
 #endif
-int __ioctl_set_function_name( struct my_misc_dev_extern* t, void * arg)
-{
-    ictl_set_funct_name msg;
-    int retval = 0;
-    if(unlikely(0 != copy_from_user(&msg, arg, sizeof(msg)))){
-            retval = -EINVAL;
-            goto DONE;
-        }
 
-    strncpy(t->name ,msg.name,sizeof(t->name));
-    t->code = msg.code;
-    printk("%s:%d t->name <%s> t->code <%d>\n",__func__,__LINE__,t->name,t->code);
+extern long my_ioctl( struct file *file,unsigned int cmd, unsigned long arg);
 
-DONE:
-    return retval;
-}
-int __release_mem_ctx( struct my_misc_dev_extern* t)
-{
-    if(t->mem_ctx.ptr)
-    {
-        if(t->mem_ctx.flag == VMD_VMALLOCED)
-            vfree(t->mem_ctx.ptr);
-        else
-            kfree(t->mem_ctx.ptr);
-
-    }
-    t->mem_ctx.ptr = NULL;
-    t->mem_ctx.flag  = 0;
-    t->mem_ctx.size = 0;
-	return 0;
-}
-int __ioctl_alloc_mem( struct my_misc_dev_extern* t, void * arg)
-{
-    unsigned long size;
-    int retval = 0;
-    int flags = 0;
-    void* vdata = NULL;
-    size = ( unsigned long)arg;
-    if (size <= PAGE_SIZE*16)
-		vdata = kzalloc(size, GFP_KERNEL);
-	else {
-		vdata = vzalloc(size);
-		flags = VMD_VMALLOCED;
-	}
-	if(vdata)
-	{
-	    if(t->mem_ctx.ptr)
-	    {
-	       __release_mem_ctx(t);
-
-	    }
-        t->mem_ctx.ptr = vdata;
-        t->mem_ctx.flag =flags;
-        t->mem_ctx.size = size;
-    }
-    else
-    {
-         retval = -ENOMEM;
-    }
-    printk("%s:%d ptr <%p> size <%lu>\n",__func__,__LINE__,t->mem_ctx.ptr,t->mem_ctx.size);
-
-//DONE:
-    return retval;
-}
-int __ioctl_test_mem( struct my_misc_dev_extern* t, void * arg)
-{
-    unsigned long offset;
-    char* p;
-    offset = ( unsigned long)arg;
-
-	    if(t->mem_ctx.ptr)
-	    {
-	        p = (char*)t->mem_ctx.ptr+offset;
-            printk("%s:%d ptr <%s> \n",__func__,__LINE__,p);
-            strcpy(p,"5667cfgg");
-	    }
-
-
-
-//DONE:
-    return 0;
-}
-
-static long my_ioctl( struct file *file,unsigned int cmd, unsigned long arg)
-{
-    int ret;
-
-    struct my_misc_dev_extern* t = ( struct my_misc_dev_extern *)file->private_data;
-
-    printk("%s:%d file->private_data %p \n",__func__,__LINE__,file->private_data);
-
-	switch(cmd) {
-
-	case IOCTL_CODE_SET_FUNCTION_NAME:
-    	printk("%s:%d IOCTL_CODE_SET_FUNCTION_NAME \n",__func__,__LINE__);
-    	return __ioctl_set_function_name(t,(void*)arg);
-		break;
-	case IOCTL_CODE_ALLOC_MEM:
-    	printk("%s:%d IOCTL_CODE_ALLOC_MEM \n",__func__,__LINE__);
-    	return __ioctl_alloc_mem(t,(void*)arg);
-		break;
-
-        case IOCTL_CODE_TEST_MEM:
-            printk("%s:%d IOCTL_CODE_test_MEM \n",__func__,__LINE__);
-            return __ioctl_test_mem(t,(void*)arg);
-            break;
-
-
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
-}
 extern int my_mmap (struct file *file , struct vm_area_struct * vm);
 
 static int my_release(struct inode *inode, struct file *file)
@@ -201,11 +94,33 @@ static int my_open(struct inode *inode, struct file *file)
     struct my_misc_dev_extern* t= (struct my_misc_dev_extern*)kmalloc(sizeof(struct my_misc_dev_extern),GFP_KERNEL);
     memset(t,0,sizeof(struct my_misc_dev_extern));
 
+	init_waitqueue_head(&t->wait);
 
 	file->private_data = (void*)t;
     printk("%s:%d file->private_data %p \n",__func__,__LINE__,file->private_data);
 	return 0;
 }
+
+
+static unsigned int
+my_poll(struct file *file, poll_table * wait)
+{
+	unsigned int mask;
+    struct my_misc_dev_extern* t = ( struct my_misc_dev_extern *)file->private_data;
+
+    printk("%s:%d ############### \n",__func__,__LINE__);
+
+	poll_wait(file, &t->wait, wait);
+	mask = 0;
+	//if (ENTROPY_BITS(&input_pool) >= random_read_wakeup_thresh)
+		mask |= POLLIN | POLLRDNORM;
+#if 0
+	if (ENTROPY_BITS(&input_pool) < random_write_wakeup_thresh)
+		mask |= POLLOUT | POLLWRNORM;
+#endif
+	return mask;
+}
+
 const static struct file_operations my_cdev_fops = {
 	.owner		= THIS_MODULE,
 	.open       = my_open,
@@ -215,6 +130,7 @@ const static struct file_operations my_cdev_fops = {
 	.unlocked_ioctl		= my_ioctl,
 	.release      =  my_release,
 	.mmap           = my_mmap,
+	.poll           = my_poll,
 };
 
 struct miscdevice my_misc_dev =

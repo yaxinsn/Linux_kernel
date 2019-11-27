@@ -33,29 +33,20 @@ struct page *my_vma_nopage(struct vm_area_struct *vma,
 	
     struct my_mem_ctx *p = &t->mem_ctx;
 
-	printk("%s:%d ############# p %p\n",__func__,__LINE__,p);
+	//printk("%s:%d ############# p %p\n",__func__,__LINE__,p);
 	struct page *page = NOPAGE_SIGBUS;
 	void *pageptr = NULL; /* default to "missing" */
 
-        printk("%s:%d vma->vm_pgoff %d (address - vma->vm_start) %d \n",__func__,__LINE__,vma->vm_pgoff,(address - vma->vm_start));
 	offset = (address - vma->vm_start) + (vma->vm_pgoff << PAGE_SHIFT);
-	//offset = (address - vma->vm_start);// + (vma->vm_pgoff << PAGE_SHIFT);
 	if (offset >= p->size)
 	    goto out; /* out of range */
 
-	printk("%s:%d ############# offset %d \n",__func__,__LINE__,offset);
-	/*
-	 * Now retrieve the scullv device from the list,then the page.
-	 * If the device has holes, the process receives a SIGBUS when
-	 * accessing the hole.
-	 */
-	//offset >>= PAGE_SHIFT; /* offset is a number of pages */
+
 
     pageptr = ((char*)p->ptr+offset);
 
 	page = vmalloc_to_page(pageptr);
 
-    printk("%s:%d mspec_mmap############# paddr %p ppage %x \n",__func__,__LINE__,pageptr,page);
 	/* got it, now increment the count */
 	get_page(page);
 	if (type)
@@ -95,7 +86,7 @@ my_vma_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 #endif
 
-static const struct vm_operations_struct mspec_vm_ops = {
+static struct vm_operations_struct mspec_vm_ops = {
 	.open = my_vma_open,
 	.close = my_vma_close,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 26)

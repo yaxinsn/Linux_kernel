@@ -15,6 +15,7 @@
 #define IOCTL_CODE_ALLOC_MEM            IOCTL_CODE_MK(4)
 #define IOCTL_CODE_TEST_MEM            IOCTL_CODE_MK(5)
 
+#define IOCTL_CODE_TEST_POLL_WAITER_WAKE_UP            IOCTL_CODE_MK(6) 
 
 typedef struct ioctl_msg_set_func_name_st
 {
