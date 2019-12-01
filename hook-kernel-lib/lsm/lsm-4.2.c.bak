@@ -1,0 +1,1280 @@
+/*
+ * lsm.c
+ *
+ * Copyright (C) 2010-2015  Tetsuo Handa <penguin-kernel@I-love.SAKURA.ne.jp>
+ *
+ * Version: 1.0.35   2015/11/11
+ */
+#include <linux/mman.h>
+#include "internal.h"
+#include "probe.h"
+#include "../scheme.h"
+#include "../../common/pid_ctx.h"
+#include "../../common/genTable.h"
+#include "../xHookProc.h"
+#include "../xLsmHook.h" 
+#include "../ProtectFile.h" 
+#include "../scriptfilter.h"
+#include "../iNodeCtxTable.h"
+#include "securityhook.h"
+
+/* Prototype definition. */
+static void ccs_task_security_gc(void);
+static int ccs_copy_cred_security(const struct cred *new,
+				  const struct cred *old, gfp_t gfp);
+static struct ccs_security *ccs_find_cred_security(const struct cred *cred);
+static DEFINE_SPINLOCK(ccs_task_security_list_lock);
+static atomic_t ccs_in_execve_tasks = ATOMIC_INIT(0);
+/*
+ * List of "struct ccs_security" for "struct pid".
+ *
+ * All instances on this list is guaranteed that "struct ccs_security"->pid !=
+ * NULL. Also, instances on this list that are in execve() are guaranteed that
+ * "struct ccs_security"->cred remembers "struct linux_binprm"->cred with a
+ * refcount on "struct linux_binprm"->cred.
+ */
+struct list_head ccs_task_security_list[CCS_MAX_TASK_SECURITY_HASH];
+/*
+ * List of "struct ccs_security" for "struct cred".
+ *
+ * Since the number of "struct cred" is nearly equals to the number of
+ * "struct pid", we allocate hash tables like ccs_task_security_list.
+ *
+ * All instances on this list are guaranteed that "struct ccs_security"->pid ==
+ * NULL and "struct ccs_security"->cred != NULL.
+ */
+static struct list_head ccs_cred_security_list[CCS_MAX_TASK_SECURITY_HASH];
+
+/* Dummy security context for avoiding NULL pointer dereference. */
+// -- static struct ccs_security ccs_oom_security = {
+// --	.ccs_domain_info = &ccs_kernel_domain
+// -- };
+
+/* Dummy security context for avoiding NULL pointer dereference. */
+// -- static struct ccs_security ccs_default_security = {
+// --	.ccs_domain_info = &ccs_kernel_domain
+// -- };
+
+/* For exporting variables and functions. */
+// -- struct ccsecurity_exports ccsecurity_exports;
+/* Members are updated by loadable kernel module. */
+// -- struct ccsecurity_operations ccsecurity_ops;
+
+/* Original hooks. */
+static union security_list_options original_cred_prepare;
+static union security_list_options original_cred_free;
+static union security_list_options original_cred_alloc_blank;
+
+#ifdef CONFIG_AKARI_TRACE_EXECVE_COUNT
+
+/**
+ * ccs_update_ee_counter - Update "struct ccs_execve" counter.
+ *
+ * @count: Count to increment or decrement.
+ *
+ * Returns updated counter.
+ */
+static unsigned int ccs_update_ee_counter(int count)
+{
+	/* Debug counter for detecting "struct ccs_execve" memory leak. */
+	static atomic_t ccs_ee_counter = ATOMIC_INIT(0);
+	return atomic_add_return(count, &ccs_ee_counter);
+}
+
+/**
+ * ccs_audit_alloc_execve - Audit allocation of "struct ccs_execve".
+ *
+ * @ee: Pointer to "struct ccs_execve".
+ *
+ * Returns nothing.
+ */
+void ccs_audit_alloc_execve(const struct ccs_execve * const ee)
+{
+	printk(KERN_INFO "AKARI: Allocated %p by pid=%u (count=%u)\n", ee,
+	       current->pid, ccs_update_ee_counter(1) - 1);
+}
+
+/**
+ * ccs_audit_free_execve - Audit release of "struct ccs_execve".
+ *
+ * @ee:   Pointer to "struct ccs_execve".
+ * @task: True if released by current task, false otherwise.
+ *
+ * Returns nothing.
+ */
+void ccs_audit_free_execve(const struct ccs_execve * const ee,
+			   const bool is_current)
+{
+	const unsigned int tmp = ccs_update_ee_counter(-1);
+	if (is_current)
+		printk(KERN_INFO "AKARI: Releasing %p by pid=%u (count=%u)\n",
+		       ee, current->pid, tmp);
+	else
+		printk(KERN_INFO "AKARI: Releasing %p by kernel (count=%u)\n",
+		       ee, tmp);
+}
+
+#endif
+
+#if !defined(CONFIG_AKARI_DEBUG)
+#define ccs_debug_trace(pos) do { } while (0)
+#else
+#define ccs_debug_trace(pos)						\
+	do {								\
+		static bool done;					\
+		if (!done) {						\
+			printk(KERN_INFO				\
+			       "AKARI: Debug trace: " pos " of 4\n");	\
+			done = true;					\
+		}							\
+	} while (0)						 
+#endif
+
+/**
+ * ccs_clear_execve - Release memory used by do_execve().
+ *
+ * @ret:      0 if do_execve() succeeded, negative value otherwise.
+ * @security: Pointer to "struct ccs_security".
+ *
+ * Returns nothing.
+ */
+static void ccs_clear_execve(int ret, struct ccs_security *security)
+{
+}
+
+/**
+ * ccs_rcu_free - RCU callback for releasing "struct ccs_security".
+ *
+ * @rcu: Pointer to "struct rcu_head".
+ *
+ * Returns nothing.
+ */
+static void ccs_rcu_free(struct rcu_head *rcu)
+{
+	 
+}
+
+/**
+ * ccs_del_security - Release "struct ccs_security".
+ *
+ * @ptr: Pointer to "struct ccs_security".
+ *
+ * Returns nothing.
+ */
+static void ccs_del_security(struct ccs_security *ptr)
+{
+ 
+}
+
+/**
+ * ccs_add_cred_security - Add "struct ccs_security" to list.
+ *
+ * @ptr: Pointer to "struct ccs_security".
+ *
+ * Returns nothing.
+ */
+static void ccs_add_cred_security(struct ccs_security *ptr)
+{
+	 
+}
+
+/**
+ * ccs_task_create - Make snapshot of security context for new task.
+ *
+ * @clone_flags: Flags passed to clone().
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_task_create(unsigned long clone_flags)
+{
+	return 0;
+}
+
+/**
+ * ccs_cred_prepare - Allocate memory for new credentials.
+ *
+ * @new: Pointer to "struct cred".
+ * @old: Pointer to "struct cred".
+ * @gfp: Memory allocation flags.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_cred_prepare(struct cred *new, const struct cred *old,
+			    gfp_t gfp)
+{
+	return 0;
+}
+
+/**
+ * ccs_cred_free - Release memory used by credentials.
+ *
+ * @cred: Pointer to "struct cred".
+ *
+ * Returns nothing.
+ */
+static void ccs_cred_free(struct cred *cred)
+{
+ 
+}
+
+/**
+ * ccs_alloc_cred_security - Allocate memory for new credentials.
+ *
+ * @cred: Pointer to "struct cred".
+ * @gfp:  Memory allocation flags.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_alloc_cred_security(const struct cred *cred, gfp_t gfp)
+{
+	return 0;
+}
+
+/**
+ * ccs_cred_alloc_blank - Allocate memory for new credentials.
+ *
+ * @new: Pointer to "struct cred".
+ * @gfp: Memory allocation flags.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_cred_alloc_blank(struct cred *new, gfp_t gfp)
+{
+	return 0;
+}
+
+/**
+ * ccs_cred_transfer - Transfer "struct ccs_security" between credentials.
+ *
+ * @new: Pointer to "struct cred".
+ * @old: Pointer to "struct cred".
+ *
+ * Returns nothing.
+ */
+static void ccs_cred_transfer(struct cred *new, const struct cred *old)
+{
+}
+
+/**
+ * ccs_bprm_committing_creds - A hook which is called when do_execve() succeeded.
+ *
+ * @bprm: Pointer to "struct linux_binprm".
+ *
+ * Returns nothing.
+ */
+static void ccs_bprm_committing_creds(struct linux_binprm *bprm)
+{
+	 
+}
+
+/**
+ * ccs_bprm_check_security - Check permission for execve().
+ *
+ * @bprm: Pointer to "struct linux_binprm".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_bprm_check_security(struct linux_binprm *bprm)
+{
+	return 0;
+}
+
+/**
+ * ccs_file_open - Check permission for open().
+ *
+ * @f:    Pointer to "struct file".
+ * @cred: Pointer to "struct cred".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_file_open(struct file *f, const struct cred *cred)
+{
+	return 0;
+}
+
+#ifdef CONFIG_SECURITY_PATH
+
+/**
+ * ccs_path_chown - Check permission for chown()/chgrp().
+ *
+ * @path:  Pointer to "struct path".
+ * @user:  User ID.
+ * @group: Group ID.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_chown(struct path *path, kuid_t user, kgid_t group)
+{
+	return 0;
+}
+
+/**
+ * ccs_path_chmod - Check permission for chmod().
+ *
+ * @path: Pointer to "struct path".
+ * @mode: Mode.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_chmod(struct path *path, umode_t mode)
+{
+	// -- return ccs_chmod_permission(path->dentry, path->mnt, mode);
+	return 0;
+}
+
+/**
+ * ccs_path_chroot - Check permission for chroot().
+ *
+ * @path: Pointer to "struct path".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_chroot(struct path *path)
+{
+	// -- return ccs_chroot_permission(path);
+	return 0;
+}
+
+/**
+ * ccs_path_truncate - Check permission for truncate().
+ *
+ * @path: Pointer to "struct path".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_truncate(struct path *path)
+{
+	// -- return ccs_truncate_permission(path->dentry, path->mnt);
+	return 0;
+}
+
+#else
+
+/**
+ * ccs_inode_setattr - Check permission for chown()/chgrp()/chmod()/truncate().
+ *
+ * @dentry: Pointer to "struct dentry".
+ * @attr:   Pointer to "struct iattr".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_setattr(struct dentry *dentry, struct iattr *attr)
+{
+	return 0;
+}
+
+#endif
+
+/**
+ * ccs_inode_getattr - Check permission for stat().
+ *
+ * @path: Pointer to "struct path".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_getattr(const struct path *path)
+{
+	// -- return ccs_getattr_permission(path->mnt, path->dentry);
+	return 0;
+}
+
+#ifdef CONFIG_SECURITY_PATH
+
+/**
+ * ccs_path_mknod - Check permission for mknod().
+ *
+ * @dir:    Pointer to "struct path".
+ * @dentry: Pointer to "struct dentry".
+ * @mode:   Create mode.
+ * @dev:    Device major/minor number.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_mknod(struct path *dir, struct dentry *dentry,
+			  umode_t mode, unsigned int dev)
+{
+	// -- return ccs_mknod_permission(dentry, dir->mnt, mode, dev);
+	return 0;
+}
+
+/**
+ * ccs_path_mkdir - Check permission for mkdir().
+ *
+ * @dir:    Pointer to "struct path".
+ * @dentry: Pointer to "struct dentry".
+ * @mode:   Create mode.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_mkdir(struct path *dir, struct dentry *dentry,
+			  umode_t mode)
+{
+	// -- return ccs_mkdir_permission(dentry, dir->mnt, mode);
+	return 0;
+}
+
+/**
+ * ccs_path_rmdir - Check permission for rmdir().
+ *
+ * @dir:    Pointer to "struct path".
+ * @dentry: Pointer to "struct dentry".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_rmdir(struct path *dir, struct dentry *dentry)
+{
+	// -- return ccs_rmdir_permission(dentry, dir->mnt);
+	return 0;
+}
+
+/**
+ * ccs_path_unlink - Check permission for unlink().
+ *
+ * @dir:    Pointer to "struct path".
+ * @dentry: Pointer to "struct dentry".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_unlink(struct path *dir, struct dentry *dentry)
+{
+	// -- return ccs_unlink_permission(dentry, dir->mnt);
+	return 0;
+}
+
+/**
+ * ccs_path_symlink - Check permission for symlink().
+ *
+ * @dir:      Pointer to "struct path".
+ * @dentry:   Pointer to "struct dentry".
+ * @old_name: Content of symbolic link.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_symlink(struct path *dir, struct dentry *dentry,
+			    const char *old_name)
+{
+	// -- return ccs_symlink_permission(dentry, dir->mnt, old_name);
+	return 0;
+}
+
+/**
+ * ccs_path_rename - Check permission for rename().
+ *
+ * @old_dir:    Pointer to "struct path".
+ * @old_dentry: Pointer to "struct dentry".
+ * @new_dir:    Pointer to "struct path".
+ * @new_dentry: Pointer to "struct dentry".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_rename(struct path *old_dir, struct dentry *old_dentry,
+			   struct path *new_dir, struct dentry *new_dentry)
+{
+	// -- return ccs_rename_permission(old_dentry, new_dentry, old_dir->mnt);
+	return 0;
+}
+
+/**
+ * ccs_path_link - Check permission for link().
+ *
+ * @old_dentry: Pointer to "struct dentry".
+ * @new_dir:    Pointer to "struct path".
+ * @new_dentry: Pointer to "struct dentry".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_path_link(struct dentry *old_dentry, struct path *new_dir,
+			 struct dentry *new_dentry)
+{
+	// -- return ccs_link_permission(old_dentry, new_dentry, new_dir->mnt);
+	return 0;
+}
+
+#else
+
+/**
+ * ccs_inode_mknod - Check permission for mknod().
+ *
+ * @dir:    Pointer to "struct inode".
+ * @dentry: Pointer to "struct dentry".
+ * @mode:   Create mode.
+ * @dev:    Device major/minor number.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_mknod(struct inode *dir, struct dentry *dentry,
+			   umode_t mode, dev_t dev)
+{
+	// - -return ccs_mknod_permission(dentry, NULL, mode, dev);
+	return 0;
+}
+
+/**
+ * ccs_inode_mkdir - Check permission for mkdir().
+ *
+ * @dir:    Pointer to "struct inode".
+ * @dentry: Pointer to "struct dentry".
+ * @mode:   Create mode.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_mkdir(struct inode *dir, struct dentry *dentry,
+			   umode_t mode)
+{
+	// -- return ccs_mkdir_permission(dentry, NULL, mode);
+	return 0;
+}
+
+
+/**
+ * ccs_inode_unlink - Check permission for unlink().
+ *
+ * @dir:    Pointer to "struct inode".
+ * @dentry: Pointer to "struct dentry".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_unlink(struct inode *dir, struct dentry *dentry)
+{
+	// -- return ccs_unlink_permission(dentry, NULL);
+	return 0;
+}
+
+/**
+ * ccs_inode_symlink - Check permission for symlink().
+ *
+ * @dir:      Pointer to "struct inode".
+ * @dentry:   Pointer to "struct dentry".
+ * @old_name: Content of symbolic link.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_symlink(struct inode *dir, struct dentry *dentry,
+			     const char *old_name)
+{
+	// -- return ccs_symlink_permission(dentry, NULL, old_name);
+	return 0;
+}
+
+/**
+ * ccs_inode_rename - Check permission for rename().
+ *
+ * @old_dir:    Pointer to "struct inode".
+ * @old_dentry: Pointer to "struct dentry".
+ * @new_dir:    Pointer to "struct inode".
+ * @new_dentry: Pointer to "struct dentry".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_rename(struct inode *old_dir, struct dentry *old_dentry,
+			    struct inode *new_dir, struct dentry *new_dentry)
+{
+	// -- return ccs_rename_permission(old_dentry, new_dentry, NULL);
+	return 0;
+}
+
+/**
+ * ccs_inode_link - Check permission for link().
+ *
+ * @old_dentry: Pointer to "struct dentry".
+ * @dir:        Pointer to "struct inode".
+ * @new_dentry: Pointer to "struct dentry".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_link(struct dentry *old_dentry, struct inode *dir,
+			  struct dentry *new_dentry)
+{
+	// -- return ccs_link_permission(old_dentry, new_dentry, NULL);
+	return 0;
+}
+
+/**
+ * ccs_inode_create - Check permission for creat().
+ *
+ * @dir:    Pointer to "struct inode".
+ * @dentry: Pointer to "struct dentry".
+ * @mode:   Create mode.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_inode_create(struct inode *dir, struct dentry *dentry,
+			    umode_t mode)
+{
+	// -- return ccs_mknod_permission(dentry, NULL, mode, 0);
+	return 0;
+}
+
+#endif
+
+#ifdef CONFIG_SECURITY_NETWORK
+
+#include <net/sock.h>
+
+/* Structure for remembering an accept()ed socket's status. */
+struct ccs_socket_tag {
+	struct list_head list;
+	struct inode *inode;
+	int status;
+	struct rcu_head rcu;
+};
+
+/*
+ * List for managing accept()ed sockets.
+ * Since we don't need to keep an accept()ed socket into this list after
+ * once the permission was granted, the number of entries in this list is
+ * likely small. Therefore, we don't use hash tables.
+ */
+static LIST_HEAD(ccs_accepted_socket_list);
+/* Lock for protecting ccs_accepted_socket_list . */
+static DEFINE_SPINLOCK(ccs_accepted_socket_list_lock);
+
+/**
+ * ccs_socket_rcu_free - RCU callback for releasing "struct ccs_socket_tag".
+ *
+ * @rcu: Pointer to "struct rcu_head".
+ *
+ * Returns nothing.
+ */
+static void ccs_socket_rcu_free(struct rcu_head *rcu)
+{
+	 
+}
+
+/**
+ * ccs_update_socket_tag - Update tag associated with accept()ed sockets.
+ *
+ * @inode:  Pointer to "struct inode".
+ * @status: New status.
+ *
+ * Returns nothing.
+ *
+ * If @status == 0, memory for that socket will be released after RCU grace
+ * period.
+ */
+static void ccs_update_socket_tag(struct inode *inode, int status)
+{
+	 
+}
+
+/**
+ * ccs_validate_socket - Check post accept() permission if needed.
+ *
+ * @sock: Pointer to "struct socket".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_validate_socket(struct socket *sock)
+{
+	return 0;
+}
+
+/**
+ * ccs_socket_accept - Check permission for accept().
+ *
+ * @sock:    Pointer to "struct socket".
+ * @newsock: Pointer to "struct socket".
+ *
+ * Returns 0 on success, negative value otherwise.
+ *
+ * This hook is used for setting up environment for doing post accept()
+ * permission check. If dereferencing sock->ops->something() were ordered by
+ * rcu_dereference(), we could replace sock->ops with "a copy of original
+ * sock->ops with modified sock->ops->accept()" using rcu_assign_pointer()
+ * in order to do post accept() permission check before returning to userspace.
+ * If we make the copy in security_socket_post_create(), it would be possible
+ * to safely replace sock->ops here, but we don't do so because we don't want
+ * to allocate memory for sockets which do not call sock->ops->accept().
+ * Therefore, we do post accept() permission check upon next socket syscalls
+ * rather than between sock->ops->accept() and returning to userspace.
+ * This means that if a socket was close()d before calling some socket
+ * syscalls, post accept() permission check will not be done.
+ */
+static int ccs_socket_accept(struct socket *sock, struct socket *newsock)
+{
+	 
+	return 0;
+}
+
+/**
+ * ccs_socket_listen - Check permission for listen().
+ *
+ * @sock:    Pointer to "struct socket".
+ * @backlog: Backlog parameter.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_listen(struct socket *sock, int backlog)
+{
+	// -- const int rc = ccs_validate_socket(sock);
+	// -- if (rc < 0)
+	// --	return rc;
+	// -- return ccs_socket_listen_permission(sock);
+	return 0;
+}
+
+/**
+ * ccs_socket_connect - Check permission for connect().
+ *
+ * @sock:     Pointer to "struct socket".
+ * @addr:     Pointer to "struct sockaddr".
+ * @addr_len: Size of @addr.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_connect(struct socket *sock, struct sockaddr *addr,
+			      int addr_len)
+{
+	// -- const int rc = ccs_validate_socket(sock);
+	// -- if (rc < 0)
+	// --	return rc;
+	// -- return ccs_socket_connect_permission(sock, addr, addr_len);
+	return 0;
+}
+
+/**
+ * ccs_socket_bind - Check permission for bind().
+ *
+ * @sock:     Pointer to "struct socket".
+ * @addr:     Pointer to "struct sockaddr".
+ * @addr_len: Size of @addr.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_bind(struct socket *sock, struct sockaddr *addr,
+			   int addr_len)
+{
+	// -- const int rc = ccs_validate_socket(sock);
+	// -- if (rc < 0)
+	// --	return rc;
+	// -- return ccs_socket_bind_permission(sock, addr, addr_len);
+	return 0;
+}
+
+/**
+ * ccs_socket_sendmsg - Check permission for sendmsg().
+ *
+ * @sock: Pointer to "struct socket".
+ * @msg:  Pointer to "struct msghdr".
+ * @size: Size of message.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_sendmsg(struct socket *sock, struct msghdr *msg,
+			      int size)
+{
+	// -- const int rc = ccs_validate_socket(sock);
+	// -- if (rc < 0)
+	// --	return rc;
+	// -- return ccs_socket_sendmsg_permission(sock, msg, size);
+	return 0;
+}
+
+/**
+ * ccs_socket_recvmsg - Check permission for recvmsg().
+ *
+ * @sock:  Pointer to "struct socket".
+ * @msg:   Pointer to "struct msghdr".
+ * @size:  Size of message.
+ * @flags: Flags.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_recvmsg(struct socket *sock, struct msghdr *msg,
+			      int size, int flags)
+{
+	// -- return ccs_validate_socket(sock);
+	return 0;
+}
+
+/**
+ * ccs_socket_getsockname - Check permission for getsockname().
+ *
+ * @sock: Pointer to "struct socket".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_getsockname(struct socket *sock)
+{
+	// -- return ccs_validate_socket(sock);
+	return 0;
+}
+
+/**
+ * ccs_socket_getpeername - Check permission for getpeername().
+ *
+ * @sock: Pointer to "struct socket".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_getpeername(struct socket *sock)
+{
+	// -- return ccs_validate_socket(sock);
+	return 0;
+}
+
+/**
+ * ccs_socket_getsockopt - Check permission for getsockopt().
+ *
+ * @sock:    Pointer to "struct socket".
+ * @level:   Level.
+ * @optname: Option's name,
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_getsockopt(struct socket *sock, int level, int optname)
+{
+	// -- return ccs_validate_socket(sock);
+	return 0;
+}
+
+/**
+ * ccs_socket_setsockopt - Check permission for setsockopt().
+ *
+ * @sock:    Pointer to "struct socket".
+ * @level:   Level.
+ * @optname: Option's name,
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_setsockopt(struct socket *sock, int level, int optname)
+{
+	// -- return ccs_validate_socket(sock);
+	return 0;
+}
+
+/**
+ * ccs_socket_shutdown - Check permission for shutdown().
+ *
+ * @sock: Pointer to "struct socket".
+ * @how:  Shutdown mode.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_socket_shutdown(struct socket *sock, int how)
+{
+	// -- return ccs_validate_socket(sock);
+	return 0;
+}
+
+#define SOCKFS_MAGIC 0x534F434B
+
+ 
+#endif
+
+/**
+ * ccs_sb_pivotroot - Check permission for pivot_root().
+ *
+ * @old_path: Pointer to "struct path".
+ * @new_path: Pointer to "struct path".
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_sb_pivotroot(struct path *old_path, struct path *new_path)
+{
+	// -- return ccs_pivot_root_permission(old_path, new_path);
+	return 0;
+}
+
+/**
+ * ccs_sb_mount - Check permission for mount().
+ *
+ * @dev_name:  Name of device file.
+ * @path:      Pointer to "struct path".
+ * @type:      Name of filesystem type. Maybe NULL.
+ * @flags:     Mount options.
+ * @data_page: Optional data. Maybe NULL.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_sb_mount(const char *dev_name, struct path *path,
+			const char *type, unsigned long flags, void *data_page)
+{
+	// -- return ccs_mount_permission(dev_name, path, type, flags, data_page);
+	return 0;
+}
+
+/**
+ * ccs_sb_umount - Check permission for umount().
+ *
+ * @mnt:   Pointer to "struct vfsmount".
+ * @flags: Unmount flags.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_sb_umount(struct vfsmount *mnt, int flags)
+{
+	// -- return ccs_umount_permission(mnt, flags);
+	return 0;
+}
+
+/**
+ * ccs_file_fcntl - Check permission for fcntl().
+ *
+ * @file: Pointer to "struct file".
+ * @cmd:  Command number.
+ * @arg:  Value for @cmd.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_file_fcntl(struct file *file, unsigned int cmd,
+			  unsigned long arg)
+{
+	// -- return ccs_fcntl_permission(file, cmd, arg);
+	return 0;
+}
+
+/**
+ * ccs_file_ioctl - Check permission for ioctl().
+ *
+ * @filp: Pointer to "struct file".
+ * @cmd:  Command number.
+ * @arg:  Value for @cmd.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+static int ccs_file_ioctl(struct file *filp, unsigned int cmd,
+			  unsigned long arg)
+{
+	// -- return ccs_ioctl_permission(filp, cmd, arg);
+	return 0;
+}
+
+int wlSecMMapCheck(struct file * file, unsigned long reqprot,
+			     unsigned long prot, unsigned long flags);
+				 
+				 
+int ccs_mmap_file(struct file *file, unsigned long reqprot,
+			     unsigned long prot, unsigned long flags)
+{
+	int retval = -1;
+	
+	retval = wlSecMMapCheck(file, reqprot, prot, flags);
+	 
+	return retval;
+}
+
+
+#if 0
+struct security_hook_heads {
+	struct list_head binder_set_context_mgr;
+	struct list_head binder_transaction;
+	struct list_head binder_transfer_binder;
+	struct list_head binder_transfer_file;
+	struct list_head ptrace_access_check;
+	struct list_head ptrace_traceme;
+	struct list_head capget;
+	struct list_head capset;
+	struct list_head capable;
+	struct list_head quotactl;
+	struct list_head quota_on;
+	struct list_head syslog;
+	struct list_head settime;
+	struct list_head vm_enough_memory;
+	struct list_head bprm_set_creds;
+	struct list_head bprm_check_security;
+	struct list_head bprm_secureexec;
+	struct list_head bprm_committing_creds;
+	struct list_head bprm_committed_creds;
+	struct list_head sb_alloc_security;
+	struct list_head sb_free_security;
+	struct list_head sb_copy_data;
+	struct list_head sb_remount;
+	struct list_head sb_kern_mount;
+	struct list_head sb_show_options;
+	struct list_head sb_statfs;
+	struct list_head sb_mount;
+	struct list_head sb_umount;
+	struct list_head sb_pivotroot;
+	struct list_head sb_set_mnt_opts;
+	struct list_head sb_clone_mnt_opts;
+	struct list_head sb_parse_opts_str;
+	struct list_head dentry_init_security;
+#ifdef CONFIG_SECURITY_PATH
+	struct list_head path_unlink;
+	struct list_head path_mkdir;
+	struct list_head path_rmdir;
+	struct list_head path_mknod;
+	struct list_head path_truncate;
+	struct list_head path_symlink;
+	struct list_head path_link;
+	struct list_head path_rename;
+	struct list_head path_chmod;
+	struct list_head path_chown;
+	struct list_head path_chroot;
+#endif
+	struct list_head inode_alloc_security;
+	struct list_head inode_free_security;
+	struct list_head inode_init_security;
+	struct list_head inode_create;
+	struct list_head inode_link;
+	struct list_head inode_unlink;
+	struct list_head inode_symlink;
+	struct list_head inode_mkdir;
+	struct list_head inode_rmdir;
+	struct list_head inode_mknod;
+	struct list_head inode_rename;
+	struct list_head inode_readlink;
+	struct list_head inode_follow_link;
+	struct list_head inode_permission;
+	struct list_head inode_setattr;
+	struct list_head inode_getattr;
+	struct list_head inode_setxattr;
+	struct list_head inode_post_setxattr;
+	struct list_head inode_getxattr;
+	struct list_head inode_listxattr;
+	struct list_head inode_removexattr;
+	struct list_head inode_need_killpriv;
+	struct list_head inode_killpriv;
+	struct list_head inode_getsecurity;
+	struct list_head inode_setsecurity;
+	struct list_head inode_listsecurity;
+	struct list_head inode_getsecid;
+	struct list_head file_permission;
+	struct list_head file_alloc_security;
+	struct list_head file_free_security;
+	struct list_head file_ioctl;
+	struct list_head mmap_addr;
+	struct list_head mmap_file;
+	struct list_head file_mprotect;
+	struct list_head file_lock;
+	struct list_head file_fcntl;
+	struct list_head file_set_fowner;
+	struct list_head file_send_sigiotask;
+	struct list_head file_receive;
+	struct list_head file_open;
+	struct list_head task_create;
+	struct list_head task_free;
+	struct list_head cred_alloc_blank;
+	struct list_head cred_free;
+	struct list_head cred_prepare;
+	struct list_head cred_transfer;
+	struct list_head kernel_act_as;
+	struct list_head kernel_create_files_as;
+	struct list_head kernel_fw_from_file;
+	struct list_head kernel_module_request;
+	struct list_head kernel_module_from_file;
+	struct list_head task_fix_setuid;
+	struct list_head task_setpgid;
+	struct list_head task_getpgid;
+	struct list_head task_getsid;
+	struct list_head task_getsecid;
+	struct list_head task_setnice;
+	struct list_head task_setioprio;
+	struct list_head task_getioprio;
+	struct list_head task_setrlimit;
+	struct list_head task_setscheduler;
+	struct list_head task_getscheduler;
+	struct list_head task_movememory;
+	struct list_head task_kill;
+	struct list_head task_wait;
+	struct list_head task_prctl;
+	struct list_head task_to_inode;
+	struct list_head ipc_permission;
+	struct list_head ipc_getsecid;
+	struct list_head msg_msg_alloc_security;
+	struct list_head msg_msg_free_security;
+	struct list_head msg_queue_alloc_security;
+	struct list_head msg_queue_free_security;
+	struct list_head msg_queue_associate;
+	struct list_head msg_queue_msgctl;
+	struct list_head msg_queue_msgsnd;
+	struct list_head msg_queue_msgrcv;
+	struct list_head shm_alloc_security;
+	struct list_head shm_free_security;
+	struct list_head shm_associate;
+	struct list_head shm_shmctl;
+	struct list_head shm_shmat;
+	struct list_head sem_alloc_security;
+	struct list_head sem_free_security;
+	struct list_head sem_associate;
+	struct list_head sem_semctl;
+	struct list_head sem_semop;
+	struct list_head netlink_send;
+	struct list_head d_instantiate;
+	struct list_head getprocattr;
+	struct list_head setprocattr;
+	struct list_head ismaclabel;
+	struct list_head secid_to_secctx;
+	struct list_head secctx_to_secid;
+	struct list_head release_secctx;
+	struct list_head inode_notifysecctx;
+	struct list_head inode_setsecctx;
+	struct list_head inode_getsecctx;
+#ifdef CONFIG_SECURITY_NETWORK
+	struct list_head unix_stream_connect;
+	struct list_head unix_may_send;
+	struct list_head socket_create;
+	struct list_head socket_post_create;
+	struct list_head socket_bind;
+	struct list_head socket_connect;
+	struct list_head socket_listen;
+	struct list_head socket_accept;
+	struct list_head socket_sendmsg;
+	struct list_head socket_recvmsg;
+	struct list_head socket_getsockname;
+	struct list_head socket_getpeername;
+	struct list_head socket_getsockopt;
+	struct list_head socket_setsockopt;
+	struct list_head socket_shutdown;
+	struct list_head socket_sock_rcv_skb;
+	struct list_head socket_getpeersec_stream;
+	struct list_head socket_getpeersec_dgram;
+	struct list_head sk_alloc_security;
+	struct list_head sk_free_security;
+	struct list_head sk_clone_security;
+	struct list_head sk_getsecid;
+	struct list_head sock_graft;
+	struct list_head inet_conn_request;
+	struct list_head inet_csk_clone;
+	struct list_head inet_conn_established;
+	struct list_head secmark_relabel_packet;
+	struct list_head secmark_refcount_inc;
+	struct list_head secmark_refcount_dec;
+	struct list_head req_classify_flow;
+	struct list_head tun_dev_alloc_security;
+	struct list_head tun_dev_free_security;
+	struct list_head tun_dev_create;
+	struct list_head tun_dev_attach_queue;
+	struct list_head tun_dev_attach;
+	struct list_head tun_dev_open;
+	struct list_head skb_owned_by;
+#endif	/* CONFIG_SECURITY_NETWORK */
+#ifdef CONFIG_SECURITY_NETWORK_XFRM
+	struct list_head xfrm_policy_alloc_security;
+	struct list_head xfrm_policy_clone_security;
+	struct list_head xfrm_policy_free_security;
+	struct list_head xfrm_policy_delete_security;
+	struct list_head xfrm_state_alloc;
+	struct list_head xfrm_state_alloc_acquire;
+	struct list_head xfrm_state_free_security;
+	struct list_head xfrm_state_delete_security;
+	struct list_head xfrm_policy_lookup;
+	struct list_head xfrm_state_pol_flow_match;
+	struct list_head xfrm_decode_session;
+#endif	/* CONFIG_SECURITY_NETWORK_XFRM */
+#ifdef CONFIG_KEYS
+	struct list_head key_alloc;
+	struct list_head key_free;
+	struct list_head key_permission;
+	struct list_head key_getsecurity;
+#endif	/* CONFIG_KEYS */
+#ifdef CONFIG_AUDIT
+	struct list_head audit_rule_init;
+	struct list_head audit_rule_known;
+	struct list_head audit_rule_match;
+	struct list_head audit_rule_free;
+#endif /* CONFIG_AUDIT */
+};
+
+/*
+ * Security module hook list structure.
+ * For use with generic list macros for common operations.
+ */
+struct security_hook_list {
+	struct list_head		list;
+	struct list_head		*head;
+	union security_list_options	hook;
+};
+
+#endif
+
+#define MY_HOOK_INIT(HEAD, HOOK)				    \
+{                                                   \
+    .head = &probe_dummy_security_hook_heads.HEAD,	\
+    .hook = { .HEAD = HOOK }                        \
+}
+
+static struct security_hook_list akari_hooks[] = {
+ 
+	/* Security context allocator. */
+	MY_HOOK_INIT(cred_free, ccs_cred_free),
+	MY_HOOK_INIT(cred_prepare, ccs_cred_prepare),
+	MY_HOOK_INIT(cred_alloc_blank, ccs_cred_alloc_blank),
+	MY_HOOK_INIT(mmap_file, ccs_mmap_file), 
+
+/*	
+#ifdef CONFIG_SECURITY_PATH
+    MY_HOOK_INIT(path_rmdir, securityhook_path_rmdir), 
+    MY_HOOK_INIT(path_unlink, securityhook_path_unlink), 
+    MY_HOOK_INIT(path_rename, securityhook_path_rename), 
+    MY_HOOK_INIT(path_truncate, securityhook_path_truncate), 
+#endif
+
+	MY_HOOK_INIT(inode_free_security, securityhook_inode_free_security), 
+	MY_HOOK_INIT(inode_alloc_security, securityhook_inode_alloc_security), 
+	MY_HOOK_INIT(inode_rmdir, securityhook_inode_rmdir), 
+    */
+
+	MY_HOOK_INIT(inode_unlink, securityhook_inode_unlink),
+	
+    //MY_HOOK_INIT(file_open, securityhook_file_open),
+
+
+	MY_HOOK_INIT(bprm_set_creds, securityhook_bprm_set_creds), 
+	MY_HOOK_INIT(bprm_check_security, securityhook_bprm_check_security), 
+};
+ 
+static inline void add_hook(struct security_hook_list *hook)
+{
+	list_add_tail_rcu(&hook->list, hook->head);
+}
+
+/*
+static void __init swap_hook(
+                        struct security_hook_list *hook,
+                        union security_list_options *original)
+{
+	struct list_head *list = hook->head;
+    
+    if (list_empty(list)) 
+    {
+        add_hook(hook);
+    } 
+    else 
+    {
+        struct security_hook_list *shp =
+            list_last_entry(list, struct security_hook_list, list);
+        *original = shp->hook;
+        smp_wmb();
+        shp->hook = hook->hook;
+    }
+}
+*/
+
+/**
+ * ccs_init - Initialize this module.
+ *
+ * Returns 0 on success, negative value otherwise.
+ */
+int ccs_init(void)
+{
+	int idx;
+	struct security_hook_heads *hooks = probe_security_hook_heads();
+    
+	if (!hooks)
+		goto out;
+    
+    for (idx = 0; idx < ARRAY_SIZE(akari_hooks); idx++)
+        akari_hooks[idx].head = ((void *) hooks)
+        + ((unsigned long)akari_hooks[idx].head)
+        - ((unsigned long)&probe_dummy_security_hook_heads);
+	
+	if (ARRAY_SIZE(akari_hooks) > 0) 
+    {
+        for (idx = 3; idx < ARRAY_SIZE(akari_hooks); idx++)
+            add_hook(&akari_hooks[idx]);
+
+        printk(KERN_INFO "AKARI: 1.0.35   2015/11/11\n");
+        printk(KERN_INFO
+        "Access Keeping And Regulating Instrument registered.\n");
+    }
+    
+	return 0;
+out:
+	return -EINVAL;
+}
+
+// -- module_init(ccs_init);
+// -- MODULE_LICENSE("GPL");
+ 

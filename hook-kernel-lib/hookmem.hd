@@ -1,0 +1,13 @@
+#ifndef __HOOKMEM_H__
+#define __HOOKMEM_H__
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+	extern char * hkMalloc(unsigned int length);
+	extern void hkFree(void * buf);
+#ifdef __cplusplus
+	}
+#endif
+#endif
+

@@ -1,0 +1,5 @@
+0x8f8ff0b1	destroy_klog	/mnt/hgfs/dd-edit-code/KTsgMod/KTsgMod	EXPORT_SYMBOL
+0xabd0c91c	rtc_time_to_tm	drivers/rtc/rtc-lib	EXPORT_SYMBOL
+0xbc65dbb3	klog_printk	/mnt/hgfs/dd-edit-code/KTsgMod/KTsgMod	EXPORT_SYMBOL
+0x016368fa	create_klog	/mnt/hgfs/dd-edit-code/KTsgMod/KTsgMod	EXPORT_SYMBOL
+0x15a815c6	klog_printk_time	/mnt/hgfs/dd-edit-code/KTsgMod/KTsgMod	EXPORT_SYMBOL
